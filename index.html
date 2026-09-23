@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Video Transcode Queue - Dashboard</title>
+  <style>
+    body { font-family: sans-serif; max-width: 960px; margin: 30px auto; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
+    th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; font-size: 14px; }
+    th { background: #f4f4f4; }
+    .QUEUED { color: #888; }
+    .PROCESSING { color: #b8860b; font-weight: bold; }
+    .DONE { color: #2e7d32; }
+    .FAILED_RETRYING { color: #e65100; }
+    .DEAD_LETTER { color: #c62828; font-weight: bold; }
+    button { margin: 4px 6px 4px 0; padding: 6px 12px; }
+    .crashed { background: #ffebee; }
+    .healthy { background: #e8f5e9; }
+  </style>
+</head>
+<body>
+  <h2>Video Transcode Queue - Dashboard</h2>
+
+  <h3>Submit a job</h3>
+  <button onclick="submitJob()">Submit sample transcode job</button>
+  <span id="queueDepth"></span>
+
+  <h3>Worker health</h3>
+  <table id="workerTable">
+    <thead><tr><th>Worker</th><th>Status</th><th>Current job</th><th>Completed</th><th>Failed</th><th>Last heartbeat</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>Jobs</h3>
+  <table id="jobTable">
+    <thead><tr><th>ID</th><th>Source</th><th>Target</th><th>Status</th><th>Attempts</th><th>Worker</th><th>Output / Error</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    async function submitJob() {
+      const formats = ['mp4_1080p', 'webm_720p', 'mp4_4k'];
+      const format = formats[Math.floor(Math.random() * formats.length)];
+      await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceUrl: 's3://raw-uploads/clip-' + Math.floor(Math.random() * 9999) + '.mov',
+          targetFormat: format
+        })
+      });
+      refresh();
+    }
+
+    async function crashWorker(workerId) {
+      await fetch('/api/admin/workers/' + workerId + '/crash', { method: 'POST' });
+      refresh();
+    }
+
+    async function refresh() {
+      const [jobs, workers, depth] = await Promise.all([
+        fetch('/api/jobs').then(r => r.json()),
+        fetch('/api/admin/workers').then(r => r.json()),
+        fetch('/api/jobs/queue-depth').then(r => r.json())
+      ]);
+
+      document.getElementById('queueDepth').textContent = '  Queue depth: ' + depth.queued;
+
+      const jobBody = document.querySelector('#jobTable tbody');
+      jobBody.innerHTML = jobs.slice().reverse().map(j => `
+        <tr>
+          <td>${j.id}</td>
+          <td>${j.sourceUrl}</td>
+          <td>${j.targetFormat}</td>
+          <td class="${j.status}">${j.status}</td>
+          <td>${j.attempts}/${j.maxAttempts}</td>
+          <td>${j.workerId || '-'}</td>
+          <td>${j.outputUrl || j.lastError || '-'}</td>
+        </tr>`).join('');
+
+      const workerBody = document.querySelector('#workerTable tbody');
+      workerBody.innerHTML = Object.entries(workers).map(([id, w]) => `
+        <tr class="${w.crashed ? 'crashed' : 'healthy'}">
+          <td>${id}</td>
+          <td>${w.crashed ? 'CRASHED' : 'RUNNING'}</td>
+          <td>${w.currentJobId || '-'}</td>
+          <td>${w.jobsCompleted}</td>
+          <td>${w.jobsFailed}</td>
+          <td>${w.secondsSinceHeartbeat}s ago</td>
+          <td><button onclick="crashWorker('${id}')" ${w.crashed ? 'disabled' : ''}>Simulate crash</button></td>
+        </tr>`).join('');
+    }
+
+    refresh();
+    setInterval(refresh, 1500);
+  </script>
+</body>
+</html>

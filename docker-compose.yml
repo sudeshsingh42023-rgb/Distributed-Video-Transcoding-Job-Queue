@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  transcode-queue:
+    build: .
+    ports:
+      - "8081:8081"
+    environment:
+      - WORKER_COUNT=4
+      - SERVER_PORT=8081
